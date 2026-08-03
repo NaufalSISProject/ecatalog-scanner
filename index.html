@@ -285,7 +285,20 @@
         toggleBtn.classList.add('stop');
         isScanning = true;
 
-        codeReader = new ZXing.BrowserMultiFormatReader();
+        const hints = new Map();
+const formats = [
+    ZXing.BarcodeFormat.CODE_128,
+    ZXing.BarcodeFormat.CODE_39,
+    ZXing.BarcodeFormat.CODE_93,
+    ZXing.BarcodeFormat.ITF,
+    ZXing.BarcodeFormat.CODABAR,
+    ZXing.BarcodeFormat.EAN_13,
+    ZXing.BarcodeFormat.EAN_8,
+    ZXing.BarcodeFormat.UPC_A,
+];
+hints.set(ZXing.DecodeHintType.POSSIBLE_FORMATS, formats);
+hints.set(ZXing.DecodeHintType.TRY_HARDER, true);
+codeReader = new ZXing.BrowserMultiFormatReader(hints);
         try {
             await codeReader.decodeFromVideoDevice(selectedDeviceId, video, (result, err) => {
                 if (result) {
