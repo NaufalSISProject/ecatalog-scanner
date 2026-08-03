@@ -32,16 +32,6 @@
         margin-bottom: 10px;
         letter-spacing: 0.05em;
     }
-    .camera-select { width: 100%; max-width: 480px; margin-bottom: 14px; }
-    select {
-        width: 100%;
-        padding: 10px 12px;
-        border-radius: 12px;
-        border: 1px solid #334155;
-        background: #1e293b;
-        color: #f1f5f9;
-        font-size: 0.9rem;
-    }
     .video-wrap {
         position: relative;
         width: 100%;
@@ -51,7 +41,7 @@
         border-radius: 20px;
         overflow: hidden;
         border: 2px solid #334155;
-        margin-bottom: 12px;
+        margin-bottom: 16px;
     }
     video { width: 100%; height: 100%; object-fit: cover; }
     .scan-line {
@@ -90,13 +80,8 @@
         gap: 5px;
     }
     .mode-chip.active { color: #fbbf24; border-color: #92400e; }
-    .dot {
-        width: 6px; height: 6px; border-radius: 50%; background: #475569;
-    }
-    .mode-chip.active .dot {
-        background: #fbbf24;
-        animation: pulse 1s ease-in-out infinite;
-    }
+    .dot { width: 6px; height: 6px; border-radius: 50%; background: #475569; }
+    .mode-chip.active .dot { background: #fbbf24; animation: pulse 1s ease-in-out infinite; }
     @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
     .placeholder {
         position: absolute;
@@ -174,7 +159,48 @@
         font-size: 0.9rem;
         white-space: nowrap;
     }
-    .footer-note { margin-top: 24px; font-size: 0.75rem; color: #475569; text-align: center; max-width: 480px; }
+
+    .target-box {
+        width: 100%;
+        max-width: 480px;
+        margin-top: 20px;
+        padding: 12px 14px;
+        background: #1e293b;
+        border: 1px solid #334155;
+        border-radius: 14px;
+        cursor: pointer;
+    }
+    .target-label {
+        font-size: 0.65rem;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        color: #64748b;
+        margin-bottom: 4px;
+    }
+    .target-display {
+        font-size: 0.8rem;
+        color: #cbd5e1;
+        word-break: break-all;
+        font-family: monospace;
+    }
+    .target-input {
+        width: 100%;
+        padding: 8px 10px;
+        border-radius: 8px;
+        border: 1px solid #4f46e5;
+        background: #0f172a;
+        color: #f1f5f9;
+        font-size: 0.8rem;
+        font-family: monospace;
+    }
+    .target-actions { display: flex; gap: 8px; margin-top: 8px; }
+    .target-actions button {
+        padding: 6px 14px;
+        font-size: 0.75rem;
+        border-radius: 8px;
+    }
+    #targetSave { background: #4f46e5; color: white; }
+    #targetCancel { background: #334155; color: #cbd5e1; }
 </style>
 </head>
 <body>
@@ -183,10 +209,6 @@
     <span class="badge">🔒 HTTPS SECURE</span>
     <h1>Live Barcode Scanner</h1>
     <p>Arahkan kamera ke barcode ATAU tulisan nomor part sparepart. Sistem otomatis membaca keduanya.</p>
-</div>
-
-<div class="camera-select">
-    <select id="cameraSelect"></select>
 </div>
 
 <div class="video-wrap">
@@ -213,15 +235,22 @@
     <button id="manualBtn">Kirim</button>
 </div>
 
-<p class="footer-note" id="returnInfo"></p>
+<div class="target-box" id="targetBox">
+    <div class="target-label">Hasil akan dikirim ke:</div>
+    <div class="target-display" id="targetDisplay"></div>
+    <input type="text" class="target-input" id="targetInput" style="display:none;">
+    <div class="target-actions" id="targetActions" style="display:none;">
+        <button id="targetSave">Simpan</button>
+        <button id="targetCancel">Batal</button>
+    </div>
+</div>
 
 <script>
     const params = new URLSearchParams(window.location.search);
-    const returnUrl = params.get('returnUrl');
+    let returnUrl = params.get('returnUrl');
 
     const video = document.getElementById('video');
     const toggleBtn = document.getElementById('toggleBtn');
-    const cameraSelect = document.getElementById('cameraSelect');
     const placeholder = document.getElementById('placeholder');
     const scanLine = document.getElementById('scanLine');
     const modeIndicator = document.getElementById('modeIndicator');
@@ -229,7 +258,13 @@
     const statusBox = document.getElementById('statusBox');
     const manualInput = document.getElementById('manualInput');
     const manualBtn = document.getElementById('manualBtn');
-    const returnInfo = document.getElementById('returnInfo');
+
+    const targetBox = document.getElementById('targetBox');
+    const targetDisplay = document.getElementById('targetDisplay');
+    const targetInput = document.getElementById('targetInput');
+    const targetActions = document.getElementById('targetActions');
+    const targetSave = document.getElementById('targetSave');
+    const targetCancel = document.getElementById('targetCancel');
 
     let codeReader = null;
     let isScanning = false;
@@ -244,16 +279,48 @@
     }
     function hideStatus() { statusBox.className = 'status-box'; }
 
+    function renderTargetDisplay() {
+        targetDisplay.textContent = returnUrl ? returnUrl : '(belum diatur — klik untuk isi manual)';
+        targetDisplay.style.display = 'block';
+        targetInput.style.display = 'none';
+        targetActions.style.display = 'none';
+    }
+
+    function enterEditMode() {
+        targetInput.value = returnUrl || '';
+        targetDisplay.style.display = 'none';
+        targetInput.style.display = 'block';
+        targetActions.style.display = 'flex';
+        targetInput.focus();
+    }
+
+    targetBox.addEventListener('click', () => {
+        if (targetInput.style.display === 'none') enterEditMode();
+    });
+
+    targetSave.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const val = targetInput.value.trim();
+        if (val) {
+            returnUrl = val;
+            toggleBtn.disabled = false;
+            manualBtn.disabled = false;
+            hideStatus();
+        }
+        renderTargetDisplay();
+    });
+
+    targetCancel.addEventListener('click', (e) => {
+        e.stopPropagation();
+        renderTargetDisplay();
+    });
+
     if (!returnUrl) {
-        showStatus('URL kembali (returnUrl) tidak ditemukan di parameter. Buka halaman ini melalui tombol "Live Scanner" di web e-Catalog, jangan diakses langsung.', 'error');
+        showStatus('Alamat tujuan belum diatur. Klik kotak "Hasil akan dikirim ke" di bawah untuk mengisinya secara manual.', 'error');
         toggleBtn.disabled = true;
         manualBtn.disabled = true;
-    } else {
-        try {
-            const u = new URL(returnUrl);
-            returnInfo.textContent = 'Hasil scan akan dikirim ke: ' + u.hostname;
-        } catch (e) { returnInfo.textContent = ''; }
     }
+    renderTargetDisplay();
 
     function sendResult(value) {
         if (!returnUrl || resultSent) return;
@@ -268,27 +335,13 @@
     async function populateCameras() {
         try {
             const devices = await ZXing.BrowserCodeReader.listVideoInputDevices();
-            cameraSelect.innerHTML = '';
-            devices.forEach((device, idx) => {
-                const opt = document.createElement('option');
-                opt.value = device.deviceId;
-                opt.textContent = device.label || ('Kamera ' + (idx + 1));
-                cameraSelect.appendChild(opt);
-            });
             const backCam = devices.find(d => /back|belakang|environment/i.test(d.label));
             selectedDeviceId = backCam ? backCam.deviceId : (devices[0] ? devices[0].deviceId : null);
-            if (selectedDeviceId) cameraSelect.value = selectedDeviceId;
         } catch (e) {
-            showStatus('Tidak bisa mengambil daftar kamera: ' + e.message, 'error');
+            showStatus('Tidak bisa mengakses daftar kamera: ' + e.message, 'error');
         }
     }
 
-    cameraSelect.addEventListener('change', () => {
-        selectedDeviceId = cameraSelect.value;
-        if (isScanning) { stopScanning(); startScanning(); }
-    });
-
-    // ---- OCR loop: jalan tiap 2.5 detik selagi kamera aktif ----
     async function runOcrTick() {
         if (!isScanning || ocrBusy || resultSent) return;
         if (!video.videoWidth) return;
@@ -309,7 +362,7 @@
                 sendResult(match[0]);
             }
         } catch (e) {
-            // diamkan, akan dicoba lagi tick berikutnya
+            // diamkan, dicoba lagi tick berikutnya
         }
         chipOcr.classList.remove('active');
         ocrBusy = false;
@@ -357,7 +410,6 @@
             return;
         }
 
-        // Mulai loop OCR paralel, jalan tiap 2.5 detik
         ocrIntervalId = setInterval(runOcrTick, 2500);
     }
 
@@ -386,7 +438,6 @@
     manualInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') manualBtn.click(); });
 
     (async function init() {
-        if (!returnUrl) return;
         try {
             const stream = await navigator.mediaDevices.getUserMedia({ video: true });
             stream.getTracks().forEach(t => t.stop());
