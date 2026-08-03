@@ -251,7 +251,7 @@
 
     async function populateCameras() {
         try {
-            const devices = await ZXingBrowser.BrowserCodeReader.listVideoInputDevices();
+            const devices = await ZXing.BrowserCodeReader.listVideoInputDevices();
             cameraSelect.innerHTML = '';
             devices.forEach((device, idx) => {
                 const opt = document.createElement('option');
@@ -285,7 +285,7 @@
         toggleBtn.classList.add('stop');
         isScanning = true;
 
-        codeReader = new ZXingBrowser.BrowserMultiFormatReader();
+        codeReader = new ZXing.BrowserMultiFormatReader();
         try {
             await codeReader.decodeFromVideoDevice(selectedDeviceId, video, (result, err) => {
                 if (result) {
