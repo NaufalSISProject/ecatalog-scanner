@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Live Barcode Scanner - E-Catalog</title>
 <script src="https://cdn.jsdelivr.net/npm/@zxing/library@0.20.0/umd/index.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
 <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
@@ -31,11 +32,7 @@
         margin-bottom: 10px;
         letter-spacing: 0.05em;
     }
-    .camera-select {
-        width: 100%;
-        max-width: 480px;
-        margin-bottom: 14px;
-    }
+    .camera-select { width: 100%; max-width: 480px; margin-bottom: 14px; }
     select {
         width: 100%;
         padding: 10px 12px;
@@ -98,10 +95,20 @@
         font-size: 0.95rem;
         background: #4f46e5;
         color: white;
-        margin-bottom: 20px;
+        margin-bottom: 12px;
     }
     .btn-main.stop { background: #dc2626; }
     .btn-main:disabled { background: #334155; color: #64748b; cursor: not-allowed; }
+    .btn-ocr {
+        width: 100%;
+        max-width: 480px;
+        padding: 14px;
+        font-size: 0.95rem;
+        background: #0891b2;
+        color: white;
+        margin-bottom: 20px;
+    }
+    .btn-ocr:disabled { background: #334155; color: #64748b; cursor: not-allowed; }
     .status-box {
         width: 100%;
         max-width: 480px;
@@ -127,18 +134,8 @@
         text-transform: uppercase;
         letter-spacing: 0.05em;
     }
-    .divider::before, .divider::after {
-        content: '';
-        flex: 1;
-        height: 1px;
-        background: #334155;
-    }
-    .manual-box {
-        width: 100%;
-        max-width: 480px;
-        display: flex;
-        gap: 8px;
-    }
+    .divider::before, .divider::after { content: ''; flex: 1; height: 1px; background: #334155; }
+    .manual-box { width: 100%; max-width: 480px; display: flex; gap: 8px; }
     .manual-box input {
         flex: 1;
         padding: 12px 14px;
@@ -157,13 +154,7 @@
         font-size: 0.9rem;
         white-space: nowrap;
     }
-    .footer-note {
-        margin-top: 24px;
-        font-size: 0.75rem;
-        color: #475569;
-        text-align: center;
-        max-width: 480px;
-    }
+    .footer-note { margin-top: 24px; font-size: 0.75rem; color: #475569; text-align: center; max-width: 480px; }
 </style>
 </head>
 <body>
@@ -188,6 +179,7 @@
 </div>
 
 <button class="btn-main" id="toggleBtn">Mulai Kamera</button>
+<button class="btn-ocr" id="ocrBtn" disabled>📷 Baca Nomor Part (OCR)</button>
 
 <div class="status-box" id="statusBox"></div>
 
@@ -206,6 +198,7 @@
 
     const video = document.getElementById('video');
     const toggleBtn = document.getElementById('toggleBtn');
+    const ocrBtn = document.getElementById('ocrBtn');
     const cameraSelect = document.getElementById('cameraSelect');
     const placeholder = document.getElementById('placeholder');
     const scanLine = document.getElementById('scanLine');
@@ -223,11 +216,8 @@
         statusBox.className = 'status-box show status-' + type;
     }
 
-    function hideStatus() {
-        statusBox.className = 'status-box';
-    }
+    function hideStatus() { statusBox.className = 'status-box'; }
 
-    // Validasi returnUrl wajib ada
     if (!returnUrl) {
         showStatus('URL kembali (returnUrl) tidak ditemukan di parameter. Buka halaman ini melalui tombol "Live Scanner" di web e-Catalog, jangan diakses langsung.', 'error');
         toggleBtn.disabled = true;
@@ -236,16 +226,14 @@
         try {
             const u = new URL(returnUrl);
             returnInfo.textContent = 'Hasil scan akan dikirim ke: ' + u.hostname;
-        } catch (e) {
-            returnInfo.textContent = '';
-        }
+        } catch (e) { returnInfo.textContent = ''; }
     }
 
-    function sendResult(barcodeValue) {
+    function sendResult(value) {
         if (!returnUrl) return;
         const separator = returnUrl.includes('?') ? '&' : '?';
-        const finalUrl = returnUrl + separator + 'barcode=' + encodeURIComponent(barcodeValue);
-        showStatus('Barcode terbaca: ' + barcodeValue + ' — mengarahkan kembali...', 'success');
+        const finalUrl = returnUrl + separator + 'barcode=' + encodeURIComponent(value);
+        showStatus('Kode terbaca: ' + value + ' — mengarahkan kembali...', 'success');
         setTimeout(() => { window.location.href = finalUrl; }, 700);
     }
 
@@ -259,7 +247,6 @@
                 opt.textContent = device.label || ('Kamera ' + (idx + 1));
                 cameraSelect.appendChild(opt);
             });
-            // Prioritaskan kamera belakang jika labelnya mengandung "back"
             const backCam = devices.find(d => /back|belakang|environment/i.test(d.label));
             selectedDeviceId = backCam ? backCam.deviceId : (devices[0] ? devices[0].deviceId : null);
             if (selectedDeviceId) cameraSelect.value = selectedDeviceId;
@@ -270,10 +257,7 @@
 
     cameraSelect.addEventListener('change', () => {
         selectedDeviceId = cameraSelect.value;
-        if (isScanning) {
-            stopScanning();
-            startScanning();
-        }
+        if (isScanning) { stopScanning(); startScanning(); }
     });
 
     async function startScanning() {
@@ -284,27 +268,26 @@
         toggleBtn.textContent = 'Hentikan Kamera';
         toggleBtn.classList.add('stop');
         isScanning = true;
+        ocrBtn.disabled = false;
 
         const hints = new Map();
-const formats = [
-    ZXing.BarcodeFormat.CODE_128,
-    ZXing.BarcodeFormat.CODE_39,
-    ZXing.BarcodeFormat.CODE_93,
-    ZXing.BarcodeFormat.ITF,
-    ZXing.BarcodeFormat.CODABAR,
-    ZXing.BarcodeFormat.EAN_13,
-    ZXing.BarcodeFormat.EAN_8,
-    ZXing.BarcodeFormat.UPC_A,
-];
-hints.set(ZXing.DecodeHintType.POSSIBLE_FORMATS, formats);
-hints.set(ZXing.DecodeHintType.TRY_HARDER, true);
-codeReader = new ZXing.BrowserMultiFormatReader(hints);
+        const formats = [
+            ZXing.BarcodeFormat.CODE_128,
+            ZXing.BarcodeFormat.CODE_39,
+            ZXing.BarcodeFormat.CODE_93,
+            ZXing.BarcodeFormat.ITF,
+            ZXing.BarcodeFormat.CODABAR,
+            ZXing.BarcodeFormat.EAN_13,
+            ZXing.BarcodeFormat.EAN_8,
+            ZXing.BarcodeFormat.UPC_A,
+        ];
+        hints.set(ZXing.DecodeHintType.POSSIBLE_FORMATS, formats);
+        hints.set(ZXing.DecodeHintType.TRY_HARDER, true);
+        codeReader = new ZXing.BrowserMultiFormatReader(hints);
+
         try {
             await codeReader.decodeFromVideoDevice(selectedDeviceId, video, (result, err) => {
-                if (result) {
-                    sendResult(result.getText());
-                    stopScanning();
-                }
+                if (result) { sendResult(result.getText()); stopScanning(); }
             });
         } catch (e) {
             if (e && e.name === 'NotAllowedError') {
@@ -317,11 +300,9 @@ codeReader = new ZXing.BrowserMultiFormatReader(hints);
     }
 
     function stopScanning() {
-        if (codeReader) {
-            try { codeReader.reset(); } catch (e) {}
-            codeReader = null;
-        }
+        if (codeReader) { try { codeReader.reset(); } catch (e) {} codeReader = null; }
         isScanning = false;
+        ocrBtn.disabled = true;
         placeholder.style.display = 'flex';
         scanLine.style.display = 'none';
         toggleBtn.textContent = 'Mulai Kamera';
@@ -329,11 +310,42 @@ codeReader = new ZXing.BrowserMultiFormatReader(hints);
     }
 
     toggleBtn.addEventListener('click', () => {
-        if (isScanning) {
-            stopScanning();
-        } else {
-            startScanning();
+        if (isScanning) { stopScanning(); } else { startScanning(); }
+    });
+
+    // ---- OCR: baca teks nomor part dari frame video saat ini ----
+    ocrBtn.addEventListener('click', async () => {
+        if (!isScanning) {
+            showStatus('Aktifkan kamera terlebih dahulu sebelum membaca teks.', 'error');
+            return;
         }
+        showStatus('Membaca teks dari gambar, mohon tunggu...', 'info');
+        ocrBtn.disabled = true;
+        toggleBtn.disabled = true;
+
+        const canvas = document.createElement('canvas');
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+        canvas.getContext('2d').drawImage(video, 0, 0);
+
+        try {
+            const result = await Tesseract.recognize(canvas, 'eng');
+            const rawText = result.data.text;
+            const match = rawText.match(/\d{3,5}-\d{1,3}-\d{3,5}/);
+            if (match) {
+                showStatus('Nomor part terbaca: ' + match[0] + ' — mengirim...', 'success');
+                sendResult(match[0]);
+                stopScanning();
+            } else {
+                const firstLine = rawText.trim().split('\n').find(line => line.trim().length > 0) || '';
+                manualInput.value = firstLine.trim();
+                showStatus('Tidak ditemukan pola nomor part otomatis. Hasil bacaan mentah dimasukkan ke kolom manual di bawah — silakan periksa/koreksi lalu klik Kirim.', 'info');
+            }
+        } catch (e) {
+            showStatus('Gagal membaca teks: ' + e.message, 'error');
+        }
+        ocrBtn.disabled = false;
+        toggleBtn.disabled = false;
     });
 
     manualBtn.addEventListener('click', () => {
@@ -342,19 +354,14 @@ codeReader = new ZXing.BrowserMultiFormatReader(hints);
         sendResult(val);
     });
 
-    manualInput.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter') manualBtn.click();
-    });
+    manualInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') manualBtn.click(); });
 
-    // Init: minta izin kamera dulu supaya label device muncul, lalu populate list
     (async function init() {
         if (!returnUrl) return;
         try {
             const stream = await navigator.mediaDevices.getUserMedia({ video: true });
             stream.getTracks().forEach(t => t.stop());
-        } catch (e) {
-            // biarkan saja, nanti error ditangani saat startScanning
-        }
+        } catch (e) {}
         await populateCameras();
     })();
 </script>
