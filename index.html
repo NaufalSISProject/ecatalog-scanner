@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Live Barcode Scanner - E-Catalog</title>
-<script src="https://cdn.jsdelivr.net/npm/@zxing/library@0.20.0/umd/index.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/zxing-wasm@3.1.2/dist/iife/reader/index.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
 <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -177,12 +177,7 @@
         color: #64748b;
         margin-bottom: 4px;
     }
-    .target-display {
-        font-size: 0.8rem;
-        color: #cbd5e1;
-        word-break: break-all;
-        font-family: monospace;
-    }
+    .target-display { font-size: 0.8rem; color: #cbd5e1; word-break: break-all; font-family: monospace; }
     .target-input {
         width: 100%;
         padding: 8px 10px;
@@ -194,13 +189,16 @@
         font-family: monospace;
     }
     .target-actions { display: flex; gap: 8px; margin-top: 8px; }
-    .target-actions button {
-        padding: 6px 14px;
-        font-size: 0.75rem;
-        border-radius: 8px;
-    }
+    .target-actions button { padding: 6px 14px; font-size: 0.75rem; border-radius: 8px; }
     #targetSave { background: #4f46e5; color: white; }
     #targetCancel { background: #334155; color: #cbd5e1; }
+    .engine-note {
+        font-size: 0.65rem;
+        color: #475569;
+        text-align: center;
+        margin-top: 10px;
+        max-width: 480px;
+    }
 </style>
 </head>
 <body>
@@ -245,6 +243,8 @@
     </div>
 </div>
 
+<p class="engine-note">Engine: zxing-cpp (WASM) — sama seperti library di aplikasi HID Barcode Scanner</p>
+
 <script>
     const params = new URLSearchParams(window.location.search);
     let returnUrl = params.get('returnUrl');
@@ -266,11 +266,12 @@
     const targetSave = document.getElementById('targetSave');
     const targetCancel = document.getElementById('targetCancel');
 
-    let codeReader = null;
+    let mediaStream = null;
     let isScanning = false;
-    let selectedDeviceId = null;
     let ocrIntervalId = null;
+    let barcodeIntervalId = null;
     let ocrBusy = false;
+    let barcodeBusy = false;
     let resultSent = false;
 
     function showStatus(message, type) {
@@ -285,7 +286,6 @@
         targetInput.style.display = 'none';
         targetActions.style.display = 'none';
     }
-
     function enterEditMode() {
         targetInput.value = returnUrl || '';
         targetDisplay.style.display = 'none';
@@ -293,27 +293,14 @@
         targetActions.style.display = 'flex';
         targetInput.focus();
     }
-
-    targetBox.addEventListener('click', () => {
-        if (targetInput.style.display === 'none') enterEditMode();
-    });
-
+    targetBox.addEventListener('click', () => { if (targetInput.style.display === 'none') enterEditMode(); });
     targetSave.addEventListener('click', (e) => {
         e.stopPropagation();
         const val = targetInput.value.trim();
-        if (val) {
-            returnUrl = val;
-            toggleBtn.disabled = false;
-            manualBtn.disabled = false;
-            hideStatus();
-        }
+        if (val) { returnUrl = val; toggleBtn.disabled = false; manualBtn.disabled = false; hideStatus(); }
         renderTargetDisplay();
     });
-
-    targetCancel.addEventListener('click', (e) => {
-        e.stopPropagation();
-        renderTargetDisplay();
-    });
+    targetCancel.addEventListener('click', (e) => { e.stopPropagation(); renderTargetDisplay(); });
 
     if (!returnUrl) {
         showStatus('Alamat tujuan belum diatur. Klik kotak "Hasil akan dikirim ke" di bawah untuk mengisinya secara manual.', 'error');
@@ -332,16 +319,43 @@
         setTimeout(() => { window.location.href = finalUrl; }, 700);
     }
 
-    async function populateCameras() {
+    // ---- BARCODE: pakai zxing-wasm (engine zxing-cpp, sama seperti app referensi) ----
+    const BARCODE_FORMATS = [
+        'Code128', 'Code39', 'Code93', 'Codabar', 'ITF',
+        'EAN-13', 'EAN-8', 'UPC-A', 'UPC-E', 'QRCode', 'DataMatrix', 'PDF417'
+    ];
+
+    async function runBarcodeTick() {
+        if (!isScanning || barcodeBusy || resultSent) return;
+        if (!video.videoWidth) return;
+        barcodeBusy = true;
+
+        const canvas = document.createElement('canvas');
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(video, 0, 0);
+        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+
         try {
-            const devices = await ZXing.BrowserCodeReader.listVideoInputDevices();
-            const backCam = devices.find(d => /back|belakang|environment/i.test(d.label));
-            selectedDeviceId = backCam ? backCam.deviceId : (devices[0] ? devices[0].deviceId : null);
+            const results = await ZXingWASM.readBarcodesFromImageData(imageData, {
+                formats: BARCODE_FORMATS,
+                tryHarder: true,
+                maxNumberOfSymbols: 1,
+            });
+            if (results && results.length > 0 && results[0].isValid !== false) {
+                const text = results[0].text;
+                if (text && !resultSent) {
+                    sendResult(text);
+                }
+            }
         } catch (e) {
-            showStatus('Tidak bisa mengakses daftar kamera: ' + e.message, 'error');
+            // diamkan, dicoba lagi tick berikutnya
         }
+        barcodeBusy = false;
     }
 
+    // ---- OCR: baca teks nomor part, jalan paralel tiap 2.5 detik ----
     async function runOcrTick() {
         if (!isScanning || ocrBusy || resultSent) return;
         if (!video.videoWidth) return;
@@ -362,7 +376,7 @@
                 sendResult(match[0]);
             }
         } catch (e) {
-            // diamkan, dicoba lagi tick berikutnya
+            // diamkan
         }
         chipOcr.classList.remove('active');
         ocrBusy = false;
@@ -379,27 +393,12 @@
         toggleBtn.classList.add('stop');
         isScanning = true;
 
-        const hints = new Map();
-        const formats = [
-            ZXing.BarcodeFormat.CODE_128,
-            ZXing.BarcodeFormat.CODE_39,
-            ZXing.BarcodeFormat.CODE_93,
-            ZXing.BarcodeFormat.ITF,
-            ZXing.BarcodeFormat.CODABAR,
-            ZXing.BarcodeFormat.EAN_13,
-            ZXing.BarcodeFormat.EAN_8,
-            ZXing.BarcodeFormat.UPC_A,
-        ];
-        hints.set(ZXing.DecodeHintType.POSSIBLE_FORMATS, formats);
-        hints.set(ZXing.DecodeHintType.TRY_HARDER, true);
-        codeReader = new ZXing.BrowserMultiFormatReader(hints);
-
         try {
-            await codeReader.decodeFromVideoDevice(selectedDeviceId, video, (result, err) => {
-                if (result && !resultSent) {
-                    sendResult(result.getText());
-                }
+            mediaStream = await navigator.mediaDevices.getUserMedia({
+                video: { facingMode: { ideal: 'environment' } }
             });
+            video.srcObject = mediaStream;
+            await video.play();
         } catch (e) {
             if (e && e.name === 'NotAllowedError') {
                 showStatus('Izin kamera ditolak. Pastikan browser diberi izin akses kamera untuk situs ini.', 'error');
@@ -410,11 +409,18 @@
             return;
         }
 
+        // Barcode dicoba tiap 200ms (ringan, cepat), OCR tiap 2.5 detik (berat)
+        barcodeIntervalId = setInterval(runBarcodeTick, 200);
         ocrIntervalId = setInterval(runOcrTick, 2500);
     }
 
     function stopScanning() {
-        if (codeReader) { try { codeReader.reset(); } catch (e) {} codeReader = null; }
+        if (mediaStream) {
+            mediaStream.getTracks().forEach(t => t.stop());
+            mediaStream = null;
+        }
+        video.srcObject = null;
+        if (barcodeIntervalId) { clearInterval(barcodeIntervalId); barcodeIntervalId = null; }
         if (ocrIntervalId) { clearInterval(ocrIntervalId); ocrIntervalId = null; }
         isScanning = false;
         placeholder.style.display = 'flex';
@@ -434,16 +440,7 @@
         if (!val) return;
         sendResult(val);
     });
-
     manualInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') manualBtn.click(); });
-
-    (async function init() {
-        try {
-            const stream = await navigator.mediaDevices.getUserMedia({ video: true });
-            stream.getTracks().forEach(t => t.stop());
-        } catch (e) {}
-        await populateCameras();
-    })();
 </script>
 
 </body>
